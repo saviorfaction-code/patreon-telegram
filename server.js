@@ -6,83 +6,61 @@ require("dotenv").config();
 const app = express();
 app.use(bodyParser.json());
 
+// Debug logs
 console.log("TELEGRAM_TOKEN:", process.env.TELEGRAM_TOKEN ? "LOADED" : "MISSING");
 console.log("CHANNEL_ID:", process.env.CHANNEL_ID ? "LOADED" : "MISSING");
 console.log("WEBHOOK_SECRET:", process.env.PATREON_WEBHOOK_SECRET ? "LOADED" : "MISSING");
 
-// ⭐ Use webhook mode instead of polling
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, {
-  webHook: {
-    port: process.env.PORT || 3000,
-  },
-});
+// ⭐ TELEGRAM BOT (WEBHOOK MODE)
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { webHook: true });
 
-// ⭐ Tell Telegram where to send updates
-const WEBHOOK_URL = `https://patreon-telegram.onrender.com/telegram-webhook`;
+// ⭐ Webhook URL for Telegram
+const WEBHOOK_URL = "https://patreon-telegram.onrender.com/telegram-webhook";
 bot.setWebHook(WEBHOOK_URL);
+console.log("Webhook set to:", WEBHOOK_URL);
 
-console.log("Telegram webhook set:", WEBHOOK_URL);
-
-// In-memory mapping of Patreon ID → Telegram ID
+// ⭐ in-memory mapping Patreon ➜ Telegram
 let userLinks = {};
 
-
-// ⭐ When a user clicks /start <patreon_id> in Telegram
+// ⭐ Handle /start <patreon_id>
 bot.onText(/\/start (.+)/, async (msg, match) => {
   const telegramId = msg.from.id;
   const patreonId = match[1];
 
-  // Save link
   userLinks[patreonId] = telegramId;
 
-  bot.sendMessage(
-    telegramId,
-    "Your Telegram has been linked to your Patreon account.\n\nYou now have access."
-  );
-
-  bot.sendMessage(telegramId, "Adding you to the Telegram channel...");
+  bot.sendMessage(telegramId, "Your Telegram has been linked. Adding you to channel…");
 
   try {
-    // Create a 1-use invite link
-    const link = await bot.createChatInviteLink(process.env.CHANNEL_ID, {
+    const invite = await bot.createChatInviteLink(process.env.CHANNEL_ID, {
       member_limit: 1,
     });
 
-    bot.sendMessage(
-      telegramId,
-      `You now have access!\n\nClick to join:\n${link.invite_link}`
-    );
+    bot.sendMessage(telegramId, `Here is your invite:\n${invite.invite_link}`);
   } catch (err) {
-    console.error("Error creating invite link:", err);
-    bot.sendMessage(
-      telegramId,
-      "Sorry, I couldn't generate your invite link. Contact the admin."
-    );
+    console.error("Invite error:", err);
+    bot.sendMessage(telegramId, "Error generating invite. Contact admin.");
   }
 });
 
-
-// ⭐ Patreon webhook endpoint
+// ⭐ Patreon webhook
 app.post("/patreon-webhook", async (req, res) => {
   const event = req.body;
+  const patreonId = event?.data?.id;
+  const status = event?.data?.attributes?.patron_status;
 
-  // Patreon ID and membership status
-  const patreonId = event.data.id;
-  const status = event.data.attributes.patron_status;
+  console.log("Patreon webhook:", patreonId, status);
 
-  console.log("Patreon webhook event:", patreonId, status);
-
-  // If user is no longer active
   if (status !== "active_patron") {
     const telegramId = userLinks[patreonId];
 
     if (telegramId) {
       try {
         await bot.banChatMember(process.env.CHANNEL_ID, telegramId);
-        await bot.unbanChatMember(process.env.CHANNEL_ID, telegramId); // allows rejoin later
-        console.log("Removed from Telegram:", telegramId);
+        await bot.unbanChatMember(process.env.CHANNEL_ID, telegramId);
+        console.log("User removed:", telegramId);
       } catch (err) {
-        console.error("Error removing user:", err);
+        console.error("Removal error:", err);
       }
     }
   }
@@ -90,9 +68,13 @@ app.post("/patreon-webhook", async (req, res) => {
   res.sendStatus(200);
 });
 
-
-// ⭐ Telegram webhook entrypoint
+// ⭐ Telegram webhook endpoint (required)
 app.post("/telegram-webhook", (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
+
+// Start server (Render)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server running on", PORT));
+
