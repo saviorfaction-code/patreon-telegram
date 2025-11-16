@@ -96,10 +96,3 @@ app.post("/telegram-webhook", (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
-
-
-// Start server
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running (webhook mode)");
-});
-
